@@ -24,7 +24,7 @@ from lmcache.logging import init_logger
 from lmcache.utils import _lmcache_nvtx_annotate
 from lmcache.v1.memory_management import GPUMemoryAllocator  # noqa: E501
 from lmcache.v1.memory_management import MemoryFormat, MemoryObj
-import lmcache.c_ops as lmc_ops
+# import lmcache.c_ops as lmc_ops
 
 logger = init_logger(__name__)
 
@@ -214,9 +214,26 @@ class VLLMPagedMemGPUConnector(GPUConnectorInterface):
 
         for layer_id, layer in enumerate(kvcaches):
             k, v = layer[0], layer[1]
-            lmc_ops.reshape_and_cache_back_flash(
-                memory_obj.tensor, k, v, slot_mapping[start:end], layer_id
+            # wxl
+            # lmc_ops.reshape_and_cache_back_flash(
+            #     memory_obj.tensor, k, v, slot_mapping[start:end], layer_id
+            # )
+            # wxl add
+            tokens = memory_obj.tensor.shape[2]
+            assert memory_obj.tensor.shape[-1] == k.shape[-1] * k.shape[-2], (
+                f"Expected {k.shape[-1] * k.shape[-2]} but got {memory_obj.tensor.shape[-1]}"
             )
+            buff = memory_obj.tensor.reshape([memory_obj.tensor.shape[1], memory_obj.tensor.shape[2], k.shape[-2], k.shape[-1]])
+            key = buff[0, layer_id, :, :, :].reshape(buff.shape[2], buff.shape[3], buff.shape[4])
+            value = buff[1, layer_id, :, :, :].reshape(buff.shape[2], buff.shape[3], buff.shape[4])
+            for i in range(tokens):
+                slot_id = slot_mapping[i].cpu().item()
+                assert slot_id >= 0, (
+                    "The slot ID should be non-negative and less than the number of tokens, "
+                    "indicating that the token is in the KV cache."
+                )
+                k[slot_id // k.shape[1], slot_id % k.shape[1], :, :] = key[i, :, :]
+                v[slot_id // v.shape[1], slot_id % v.shape[1], :, :] = value[i, :, :]
 
         # TODO(Jiayi): Currently, this is a blocking operation.
         # We might be able to continue other decode jobs while
@@ -249,9 +266,23 @@ class VLLMPagedMemGPUConnector(GPUConnectorInterface):
         slot_mapping: torch.Tensor = kwargs["slot_mapping"]
         for layer_id, layer in enumerate(kvcaches):
             k, v = layer[0], layer[1]
-            lmc_ops.load_and_reshape_flash(
-                memory_obj.tensor, k, v, slot_mapping[start:end], layer_id
-            )
+            # wxl
+            # lmc_ops.load_and_reshape_flash(
+            #     memory_obj.tensor, k, v, slot_mapping[start:end], layer_id
+            # )
+            # wxl add
+            print(f"memory_obj.tensor.shape: {memory_obj.tensor.shape}, k.shape: {k.shape}, v.shape: {v.shape}")
+            tokens = memory_obj.tensor.shape[2]
+            key = memory_obj.tensor[0, layer_id].reshape(memory_obj.tensor.shape[2], k.shape[-2], k.shape[-1])
+            value = memory_obj.tensor[1, layer_id].reshape(memory_obj.tensor.shape[2], k.shape[-2], k.shape[-1])
+            for i in range(tokens):
+                slot_id = slot_mapping[i].cpu().item()
+                assert slot_id >= 0, (
+                    "The slot ID should be non-negative and less than the number of tokens, "
+                    "indicating that the token is in the KV cache."
+                )
+                key[i, :, :] = k[slot_id // k.shape[2], slot_id % k.shape[2], :, :]
+                value[i, :, :] = v[slot_id // v.shape[2], slot_id % v.shape[2], :, :]
 
         torch.cuda.synchronize()
 
@@ -310,7 +341,8 @@ class VLLMPagedMemGPUConnectorV2(GPUConnectorInterface):
     def _initialize_pointers(self, kv_caches: List[torch.Tensor]) -> torch.Tensor:
         self.kv_cache_pointers.numpy()[:] = [t.data_ptr() for t in kv_caches]
         device = kv_caches[0].device
-        assert device.type == "cuda", "The device should be CUDA."
+        # assert device.type == "cuda", "The device should be CUDA."
+        # assert device.type == "gcu", "The device should be GCU."
         idx = device.index
         if idx not in self.kv_cache_pointers_on_gpu:
             self.kv_cache_pointers_on_gpu[idx] = torch.empty(
@@ -380,15 +412,38 @@ class VLLMPagedMemGPUConnectorV2(GPUConnectorInterface):
         #        slot_mapping[start:end],
         #        kvcaches[0].device, self.page_buffer_size, False)
 
-        lmc_ops.multi_layer_kv_transfer(
-            memory_obj.tensor,
-            kv_cache_pointers,
-            slot_mapping[start:end],
-            kvcaches[0].device,
-            self.page_buffer_size,
-            False,
-            False,
+        # wxl
+        # lmc_ops.multi_layer_kv_transfer(
+        #     memory_obj.tensor,
+        #     kv_cache_pointers,
+        #     slot_mapping[start:end],
+        #     kvcaches[0].device,
+        #     self.page_buffer_size,
+        #     False,
+        #     False,
+        # )
+        # wxl add
+        k_or_v = memory_obj.tensor.shape[0]  # 0 for K, 1 for V
+        layers = memory_obj.tensor.shape[1]  # number of layers
+        tokens = memory_obj.tensor.shape[2]  # number of tokens
+
+        assert memory_obj.tensor.shape[-1] == kvcaches[0].shape[-1] * kvcaches[0].shape[-2], (
+            f"Expected {kvcaches[0].shape[-1] * kvcaches[0].shape[-2]} but got {memory_obj.tensor.shape[-1]}"
         )
+        buff = memory_obj.tensor.reshape([memory_obj.tensor.shape[0], memory_obj.tensor.shape[1], memory_obj.tensor.shape[2], kvcaches[0].shape[-2], kvcaches[0].shape[-1]])
+
+        for i in range(k_or_v):
+            for j in range(layers):
+                for k in range(tokens):
+                    slot_id = slot_mapping[k].cpu().item()
+                    assert slot_id >= 0, (
+                        "The slot ID should be non-negative and less than the number of tokens, "
+                        "indicating that the token is in the KV cache."
+                    )
+
+                    kvcaches[j][i][slot_id//kvcaches[0].shape[2]][slot_id%kvcaches[0].shape[2]][:][:] = buff[i][j][k][:][:]
+
+
 
     @_lmcache_nvtx_annotate
     def from_gpu(self, memory_obj: MemoryObj, start: int, end: int, **kwargs):
@@ -423,28 +478,68 @@ class VLLMPagedMemGPUConnectorV2(GPUConnectorInterface):
         kv_cache_pointers = self._initialize_pointers(kvcaches)
 
         if self.gpu_buffer is None or end - start != self.gpu_buffer.shape[2]:
-            lmc_ops.multi_layer_kv_transfer(
-                memory_obj.tensor,
-                kv_cache_pointers,
-                slot_mapping[start:end],
-                kvcaches[0].device,
-                self.page_buffer_size,
-                True,
-                False,
+            # lmc_ops.multi_layer_kv_transfer(
+            #     memory_obj.tensor,
+            #     kv_cache_pointers,
+            #     slot_mapping[start:end],
+            #     kvcaches[0].device,
+            #     self.page_buffer_size,
+            #     True,
+            #     False,
+            # )
+            # wxl add
+            k_or_v = memory_obj.tensor.shape[0]  # 0 for K, 1 for V
+            layers = memory_obj.tensor.shape[1]  # number of layers
+            tokens = memory_obj.tensor.shape[2]  # number of tokens
+
+            assert memory_obj.tensor.shape[-1] == kvcaches[0].shape[-1] * kvcaches[0].shape[-2], (
+                f"Expected {kvcaches[0].shape[-1] * kvcaches[0].shape[-2]} but got {memory_obj.tensor.shape[-1]}"
             )
+            buff = memory_obj.tensor.reshape([memory_obj.tensor.shape[0], memory_obj.tensor.shape[1], memory_obj.tensor.shape[2], kvcaches[0].shape[-2], kvcaches[0].shape[-1]])
+
+            for i in range(k_or_v):
+                for j in range(layers):
+                    for k in range(tokens):
+                        slot_id = slot_mapping[start:end][k].cpu().item()
+                        assert slot_id >= 0, (
+                            "The slot ID should be non-negative and less than the number of tokens, "
+                            "indicating that the token is in the KV cache."
+                        )
+
+                        buff[i][j][k][:][:] = kvcaches[j][i][slot_id//kvcaches[0].shape[2]][slot_id%kvcaches[0].shape[2]][:][:]
         else:
             # kvcaches -> gpu_buffer -> memobj
             assert self.gpu_buffer.device == kvcaches[0].device
             tmp_gpu_buffer = self.gpu_buffer[:, :, : end - start, :]
-            lmc_ops.multi_layer_kv_transfer(
-                tmp_gpu_buffer,
-                kv_cache_pointers,
-                slot_mapping[start:end],
-                kvcaches[0].device,
-                self.page_buffer_size,
-                True,
-                False,
+            # lmc_ops.multi_layer_kv_transfer(
+            #     tmp_gpu_buffer,
+            #     kv_cache_pointers,
+            #     slot_mapping[start:end],
+            #     kvcaches[0].device,
+            #     self.page_buffer_size,
+            #     True,
+            #     False,
+            # )
+            # wxl add
+            k_or_v = memory_obj.tensor.shape[0]  # 0 for K, 1 for V
+            layers = memory_obj.tensor.shape[1]  # number of layers
+            tokens = memory_obj.tensor.shape[2]  # number of tokens
+
+            assert memory_obj.tensor.shape[-1] == kvcaches[0].shape[-1] * kvcaches[0].shape[-2], (
+                f"Expected {kvcaches[0].shape[-1] * kvcaches[0].shape[-2]} but got {memory_obj.tensor.shape[-1]}"
             )
+            buff = tmp_gpu_buffer.reshape([tmp_gpu_buffer.shape[0], tmp_gpu_buffer.shape[1], tmp_gpu_buffer.shape[2], kvcaches[0].shape[-2], kvcaches[0].shape[-1]])
+
+            for i in range(k_or_v):
+                for j in range(layers):
+                    for k in range(tokens):
+                        slot_id = slot_mapping[start:end][k].cpu().item()
+                        assert slot_id >= 0, (
+                            "The slot ID should be non-negative and less than the number of tokens, "
+                            "indicating that the token is in the KV cache."
+                        )
+
+                        buff[i][j][k] = kvcaches[j][i][slot_id//kvcaches[0].shape[2]][slot_id%kvcaches[0].shape[2]]
             memory_obj.tensor.copy_(tmp_gpu_buffer, non_blocking=True)
 
         if not memory_obj.tensor.is_cuda:
@@ -578,13 +673,30 @@ class VLLMPagedMemLayerwiseGPUConnector(GPUConnectorInterface):
                         memory_obj.tensor, non_blocking=True
                     )
 
-                lmc_ops.single_layer_kv_transfer(
-                    tmp_gpu_buffer_obj.tensor,
-                    kvcaches[layer_id][0],
-                    kvcaches[layer_id][1],
-                    slot_mapping_full,
-                    False,
+                # lmc_ops.single_layer_kv_transfer(
+                #     tmp_gpu_buffer_obj.tensor,
+                #     kvcaches[layer_id][0],
+                #     kvcaches[layer_id][1],
+                #     slot_mapping_full,
+                #     False,
+                # )
+                # wxl
+                k = kvcaches[layer_id][0]
+                v = kvcaches[layer_id][1]
+                assert tmp_gpu_buffer_obj.tensor.shape[-1] == k.shape[-1] * k.shape[-2], (
+                    f"Expected {k.shape[-1] * k.shape[-2]} but got {tmp_gpu_buffer_obj.tensor.shape[-1]}"
                 )
+                tmp = tmp_gpu_buffer_obj.tensor.reshape(
+                    [tmp_gpu_buffer_obj.tensor.shape[0], tmp_gpu_buffer_obj.tensor.shape[1], k.shape[-2], k.shape[-1]]
+                )
+                for i in range(tmp_gpu_buffer_obj.tensor.shape[0]):
+                    slot_id = slot_mapping[i].cpu().item()
+                    assert slot_id >= 0, (
+                        "The slot ID should be non-negative and less than the number of tokens, "
+                        "indicating that the token is in the KV cache."
+                    )
+                    k[slot_id // k.shape[2], slot_id % k.shape[2], :, :] = tmp[i, 0, :, :]
+                    v[slot_id // v.shape[2], slot_id % v.shape[2], :, :] = tmp[i, 1, :, :]
         yield
 
         # synchronize the last layer
@@ -663,13 +775,27 @@ class VLLMPagedMemLayerwiseGPUConnector(GPUConnectorInterface):
             # kvcaches -> gpu_buffer -> memobj
             with torch.cuda.stream(self.store_stream):
                 self.store_stream.wait_stream(current_stream)
-                lmc_ops.single_layer_kv_transfer(
-                    tmp_gpu_buffer_obj.tensor,
-                    kvcaches[layer_id][0],
-                    kvcaches[layer_id][1],
-                    slot_mapping_full,
-                    True,
-                )
+                # lmc_ops.single_layer_kv_transfer(
+                #     tmp_gpu_buffer_obj.tensor,
+                #     kvcaches[layer_id][0],
+                #     kvcaches[layer_id][1],
+                #     slot_mapping_full,
+                #     True,
+                # )
+                # wxl
+                k = kvcaches[layer_id][0]
+                v = kvcaches[layer_id][1]
+                tmp = tmp_gpu_buffer_obj.tensor.reshape(
+                    [tmp_gpu_buffer_obj.tensor.shape[0], tmp_gpu_buffer_obj.tensor.shape[1], k.shape[-2], k.shape[-1]])
+                for i in range(tmp.shape[0]):
+                    slot_id = slot_mapping[i].cpu().item()
+                    assert slot_id >= 0, (
+                        "The slot ID should be non-negative and less than the number of tokens, "
+                        "indicating that the token is in the KV cache."
+                    )
+                    tmp[i, 0, :, :] = k[slot_id // k.shape[2], slot_id % k.shape[2], :, :]
+                    tmp[i, 1, :, :] = v[slot_id // v.shape[2], slot_id % v.shape[2], :, :]
+
                 for start, end, memory_obj in zip(
                     starts, ends, memory_objs_layer, strict=False
                 ):
@@ -776,16 +902,16 @@ class VLLMPagedMemGPUConnectorMLA(GPUConnectorInterface):
 
         if not self.pointers_initialized:
             self._initialize_pointers(kvcaches)
-
-        lmc_ops.multi_layer_kv_transfer(
-            memory_obj.tensor,
-            self.kv_cache_pointers,
-            slot_mapping[start:end],
-            kvcaches[0].device,
-            0,
-            False,
-            True,
-        )
+        # wxl
+        # lmc_ops.multi_layer_kv_transfer(
+        #     memory_obj.tensor,
+        #     self.kv_cache_pointers,
+        #     slot_mapping[start:end],
+        #     kvcaches[0].device,
+        #     0,
+        #     False,
+        #     True,
+        # )
 
         torch.cuda.synchronize(kvcaches[0].device)
 
@@ -823,28 +949,31 @@ class VLLMPagedMemGPUConnectorMLA(GPUConnectorInterface):
             self._initialize_pointers(kvcaches)
 
         if self.gpu_buffer is None or end - start != self.gpu_buffer.shape[1]:
-            lmc_ops.multi_layer_kv_transfer(
-                memory_obj.tensor,
-                self.kv_cache_pointers,
-                slot_mapping[start:end],
-                kvcaches[0].device,
-                0,
-                True,
-                True,
-            )
+            # wxl
+            # lmc_ops.multi_layer_kv_transfer(
+            #     memory_obj.tensor,
+            #     self.kv_cache_pointers,
+            #     slot_mapping[start:end],
+            #     kvcaches[0].device,
+            #     0,
+            #     True,
+            #     True,
+            # )
+            pass
         else:
             # kvcaches -> gpu_buffer -> memobj
             assert self.gpu_buffer.device == kvcaches[0].device
             tmp_gpu_buffer = self.gpu_buffer[:, :, : end - start, :]
-            lmc_ops.multi_layer_kv_transfer(
-                tmp_gpu_buffer,
-                self.kv_cache_pointers,
-                slot_mapping[start:end],
-                kvcaches[0].device,
-                0,
-                True,
-                True,
-            )
+            # wxl
+            # lmc_ops.multi_layer_kv_transfer(
+            #     tmp_gpu_buffer,
+            #     self.kv_cache_pointers,
+            #     slot_mapping[start:end],
+            #     kvcaches[0].device,
+            #     0,
+            #     True,
+            #     True,
+            # )
             memory_obj.tensor.copy_(tmp_gpu_buffer, non_blocking=True)
 
         torch.cuda.synchronize()

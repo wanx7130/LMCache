@@ -49,8 +49,9 @@ def CreateStorageBackends(
     layerwise: bool = False,
 ) -> OrderedDict[str, StorageBackendInterface]:
     # Replace 'cuda' with 'cuda:<device id>'
-    if dst_device == "cuda":
-        dst_device = f"cuda:{torch.cuda.current_device()}"
+    if dst_device == "cuda" or dst_device == "gcu":
+        dst_device = f"{dst_device}:{torch.cuda.current_device()}"
+
 
     storage_backends: OrderedDict[str, StorageBackendInterface] = OrderedDict()
 

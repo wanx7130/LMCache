@@ -214,6 +214,20 @@ class RequestTracker:
         """
         self.token_ids.extend(cached_request.new_token_ids)
         new_block_ids: list[int]
+        if len(cached_request.new_block_ids) == 0:
+            # No new block ids, return
+            logger.debug(
+                "No new block ids for request %s, skip update",
+                self.req_id,
+            )
+            return
+        elif isinstance(cached_request.new_block_ids[0], list):
+            if len(cached_request.new_block_ids[0]) == 0:
+                logger.debug(
+                    "No new block ids for request %s, skip update",
+                    self.req_id,
+                )
+                return
         if not isinstance(cached_request.new_block_ids[0], list):
             new_block_ids = cached_request.new_block_ids
         else:

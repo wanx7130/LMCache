@@ -727,7 +727,7 @@ class LMCacheConnectorV1Impl:
                 token_ids = token_ids[:aligned_token_len]
                 store_mask = store_mask[:aligned_token_len]
                 slot_mapping = slot_mapping[:aligned_token_len]
-
+            logger.info("[wxl debug] is_last_prefill: %d is none:%d", is_last_prefill, request.disagg_spec == None)
             self.lmcache_engine.store(
                 token_ids,
                 mask=store_mask,

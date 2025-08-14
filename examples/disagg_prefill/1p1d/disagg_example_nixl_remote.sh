@@ -2,7 +2,13 @@
 
 echo "Warning: LMCache disaggregated prefill support for vLLM v1 is experimental and subject to change."
 
+process_type=$1
 
+echo "Process type is: $process_type"
+if [[ -z "$process_type" ]]; then
+    echo "Usage: $1 <prefiller | decoder | proxy>"
+    exit 1
+fi
 PIDS=()
 
 # Switch to the directory of the current script
@@ -117,30 +123,39 @@ main() {
     echo "Launching prefiller, decoder and proxy..."
     echo "Please check prefiller.log, decoder.log and proxy.log for logs."
 
-    bash disagg_vllm_launcher.sh prefiller \
-        > >(tee prefiller.log) 2>&1 &
-    prefiller_pid=$!
-    PIDS+=($prefiller_pid)
+    if [[ "$process_type" == "prefiller" ]]; then
+        bash disagg_vllm_launcher.sh prefiller \
+            > >(tee prefiller.log) 2>&1 &
+        prefiller_pid=$!
+        wait_for_server 8100
+        PIDS+=($prefiller_pid)
+        echo "Startup prefiller process success!"
+    fi
 
-    bash disagg_vllm_launcher.sh decoder  \
-        > >(tee decoder.log)  2>&1 &
-    decoder_pid=$!
-    PIDS+=($decoder_pid)
+    if [[ "$process_type" == "decoder" ]]; then
+        bash disagg_vllm_launcher.sh decoder  \
+            > >(tee decoder.log)  2>&1 &
+        decoder_pid=$!
+        wait_for_server 8200
+        PIDS+=($decoder_pid)
 
-    python3 disagg_proxy_server_first_token_from_prefiller.py \
-        --host localhost \
-        --port 9000 \
-        --prefiller-host localhost \
-        --prefiller-port 8100 \
-        --decoder-host localhost \
-        --decoder-port 8200  \
-        > >(tee proxy.log)    2>&1 &
-    proxy_pid=$!
-    PIDS+=($proxy_pid)
+        echo "Startup decoder process success!"
+    fi
 
-    wait_for_server 8100
-    wait_for_server 8200
-    wait_for_server 9000
+    if [[ "$process_type" == "proxy" ]]; then
+        python3 disagg_proxy_server_first_token_from_prefiller.py \
+            --host 10.9.113.132 \
+            --port 9000 \
+            --prefiller-host 10.9.113.132 \
+            --prefiller-port 8100 \
+            --decoder-host 10.9.113.134 \
+            --decoder-port 8200  \
+            > >(tee proxy.log)    2>&1 &
+        proxy_pid=$!
+        wait_for_server 9000
+        PIDS+=($proxy_pid)
+        echo "Startup proxy process success!"
+    fi
 
     echo "================================================"
     echo "All servers are up. You can send request now..."

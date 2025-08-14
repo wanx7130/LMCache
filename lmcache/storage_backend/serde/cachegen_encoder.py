@@ -15,7 +15,7 @@ from lmcache.storage_backend.serde.cachegen_basics import (
 )
 from lmcache.storage_backend.serde.serde import Serializer
 from lmcache.utils import _lmcache_nvtx_annotate
-import lmcache.c_ops as lmc_ops
+# import lmcache.c_ops as lmc_ops
 import lmcache.storage_backend.serde.cachegen_basics as CGBasics
 
 logger = init_logger(__name__)
@@ -260,12 +260,13 @@ def encode_ntokens(
 
     :return byte_tensor: the byte tensor
     """
-    lmc_ops.encode_fast_new(
-        cdf_int,
-        encode_input,
-        output_buffer,
-        output_lengths,
-    )
+    # lmc_ops.encode_fast_new(
+    #     cdf_int,
+    #     encode_input,
+    #     output_buffer,
+    #     output_lengths,
+    # )
+    assert False, ("[wxl debug] encode_ntokens is fail because of the missing lmc_ops.encode_fast_new")
     byte_tensor = collect_bytes(output_buffer, output_lengths)
     return byte_tensor
     # return byte_tensor.cpu().numpy().tobytes()
@@ -381,7 +382,7 @@ class CacheGenSerializer(Serializer):
         # level
         if self.fmt == "huggingface":
             tensor = tensor.permute(0, 1, 3, 2, 4)
-        """ expecting a tensor of shape 
+        """ expecting a tensor of shape
         [num_layers, 2, num_tokens, num_heads, head_size] """
         ntokens = tensor.shape[2]
         output_dict = encode_function(

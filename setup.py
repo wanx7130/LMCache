@@ -2,6 +2,7 @@
 # Standard
 from pathlib import Path
 import os
+os.environ['NO_CUDA_EXT']='1'
 import sys
 
 # Third Party

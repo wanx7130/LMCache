@@ -15,7 +15,7 @@ from lmcache.storage_backend.serde.cachegen_basics import (
 )
 from lmcache.storage_backend.serde.serde import Deserializer
 from lmcache.utils import _lmcache_nvtx_annotate
-import lmcache.c_ops as lmc_ops
+#import lmcache.c_ops as lmc_ops
 import lmcache.storage_backend.serde.cachegen_basics as CGBasics
 
 logger = init_logger(__name__)
@@ -69,7 +69,8 @@ def decode_chunk(
         .cumsum(0)
         .reshape(data_chunk.bytestream_lengths.shape)
     )
-    lmc_ops.decode_fast_prefsum(cdf, bytes_tensor, length_prefsum, target_buffer)
+    # lmc_ops.decode_fast_prefsum(cdf, bytes_tensor, length_prefsum, target_buffer)
+    assert False, ("[wxl debug] decode_chunk is fail because of the missing lmc_ops.decode_fast_prefsum")
 
 
 @_lmcache_nvtx_annotate

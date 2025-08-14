@@ -28,8 +28,8 @@ def CreateStorageBackend(
     dst_device: str = "cuda",
 ) -> LMCBackendInterface:
     # Replace 'cuda' with 'cuda:<device id>'
-    if dst_device == "cuda":
-        dst_device = f"cuda:{torch.cuda.current_device()}"
+    if dst_device == "cuda" or dst_device == "gcu":
+        dst_device = f"{dst_device}:{torch.cuda.current_device()}"
 
     mpool_metadata = LMCacheMemPoolMetadata(
         metadata.kv_shape, metadata.kv_dtype, config.max_local_cache_size

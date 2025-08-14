@@ -891,11 +891,23 @@ class LMCacheEngineBuilder:
                 )
                 logger.info(f"Setting cuda device to {corrected_device} ")
                 torch.cuda.set_device(corrected_device)
-                buffer = torch.empty(
-                    config.nixl_buffer_size,
-                    dtype=torch.uint8,
-                    device=corrected_device,
-                )
+                # buffer = torch.empty(
+                #     config.nixl_buffer_size,
+                #     dtype=torch.uint8,
+                #     device=corrected_device,
+                # )
+                # wxl add
+                if corrected_device == "cpu":
+                    buffer = torch.empty(
+                        config.nixl_buffer_size,
+                        device=corrected_device,
+                        dtype=torch.uint8,
+                    )
+                else:
+                    buffer = torch.gcu.tops_malloc_host_accessible(
+                        [config.nixl_buffer_size],
+                        dtype=torch.int8
+                    )
                 nixl_cpu_mem_allocator = NixlCPUMemoryAllocator()
                 nixl_cpu_mem_allocator.init_nixl_memory_allocator(
                     buffer,

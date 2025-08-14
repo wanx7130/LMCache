@@ -55,11 +55,23 @@ class NixlPipe:
                 f"Buffer size must be a multiple of {NixlPipe.TRANSFER_BUFFER_SIZE}"
             )
 
-        self._buffer = torch.empty(
-            nixl_config.buffer_size,
-            device=nixl_config.buffer_device,
-            dtype=torch.uint8,
-        )
+        # self._buffer = torch.empty(
+        #     nixl_config.buffer_size,
+        #     device=nixl_config.buffer_device,
+        #     dtype=torch.uint8,
+        # )
+        # wxl add
+        if nixl_config.buffer_device == "cpu":
+              self._buffer = torch.empty(
+                nixl_config.buffer_size,
+                device=nixl_config.buffer_device,
+                dtype=torch.uint8,
+            )
+        else:
+            self._buffer = torch.gcu.tops_malloc_host_accessible(
+                [nixl_config.buffer_size],
+                dtype=torch.int8
+            )
 
         self._transfer_buffers = torch.split(
             self._buffer, NixlPipe.TRANSFER_BUFFER_SIZE, dim=0

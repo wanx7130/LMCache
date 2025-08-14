@@ -44,7 +44,7 @@ class InfinistoreConnector(RemoteConnector):
         config = infinistore.ClientConfig(
             host_addr=host,
             service_port=port,
-            log_level="info",
+            log_level="debug",
             connection_type=infinistore.TYPE_RDMA,
             ib_port=1,
             link_type=link_type,

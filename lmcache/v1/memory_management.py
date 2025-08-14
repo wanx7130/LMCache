@@ -1355,7 +1355,8 @@ class PinMemoryAllocator(MemoryAllocatorInterface):
     def close(self):
         if not self._unregistered:
             torch.cuda.synchronize()
-            torch.cuda.cudart().cudaHostUnregister(self.buffer.data_ptr())
+            # torch.cuda.cudart().cudaHostUnregister(self.buffer.data_ptr())
+            torch.gcu.gcurt().topsHostUnregister(self.buffer.data_ptr())
             self._unregistered = True
 
 
@@ -1372,7 +1373,8 @@ class MixedMemoryAllocator(MemoryAllocatorInterface):
 
         self.buffer = torch.empty(size, dtype=torch.uint8)
         ptr = self.buffer.data_ptr()
-        err = torch.cuda.cudart().cudaHostRegister(ptr, size, 0)
+        # err = torch.cuda.cudart().cudaHostRegister(ptr, size, 0)
+        err = torch.gcu.gcurt().topsHostRegister(ptr, size, 0)
         assert err == 0, (
             f"cudaHostRegister failed: {torch.cuda.cudart().cudaGetErrorString(err)}"
         )
@@ -1489,7 +1491,8 @@ class MixedMemoryAllocator(MemoryAllocatorInterface):
     def close(self):
         if not self._unregistered:
             torch.cuda.synchronize()
-            torch.cuda.cudart().cudaHostUnregister(self.buffer.data_ptr())
+            # torch.cuda.cudart().cudaHostUnregister(self.buffer.data_ptr())
+            torch.gcu.gcurt().topsHostUnregister(self.buffer.data_ptr())
             self._unregistered = True
 
 
